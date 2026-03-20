@@ -1,0 +1,21 @@
+# 智能合同审查Agent 依赖清单
+# Qwen-Agent 全家桶（含GUI、RAG、代码解释器、MCP支持）
+qwen-agent[gui,rag,code_interpreter,mcp]
+
+# OpenAI兼容接口客户端（用于调用DashScope API）
+openai
+
+# 环境变量管理
+python-dotenv
+
+# PDF文本提取
+PyPDF2
+
+# 图片处理（OCR场景）
+Pillow
+
+# Web前端框架
+gradio
+
+# 测试框架
+pytest

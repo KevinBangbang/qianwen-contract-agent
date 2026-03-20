@@ -1,0 +1,26 @@
+# 环境变量（含API Key，绝对不能提交）
+.env
+
+# Python虚拟环境
+venv/
+.venv/
+
+# 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE配置
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# 向量数据库本地存储
+knowledge/vector_store/
+
+# 临时文件
+*.tmp
+*.log
