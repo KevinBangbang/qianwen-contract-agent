@@ -162,7 +162,7 @@ class RiskChecker(BaseTool):
         这就是RAG中的Retrieval环节。
         """
         try:
-            from knowledge.build_kb import search_similar
+            from knowledge.build_kb import search_corrective
 
             # 将条款内容转换为检索查询文本
             if isinstance(clauses_data, dict):
@@ -174,7 +174,8 @@ class RiskChecker(BaseTool):
             if len(query) > 500:
                 query = query[:500]
 
-            results = search_similar(query, top_k=top_k)
+            # Corrective RAG：检索 + 质量自检 + 查询改写重试
+            results = search_corrective(query, top_k=top_k)
             if not results:
                 return ''
 

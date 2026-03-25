@@ -14,11 +14,17 @@ graph TB
         C[文本输入] --> D
     end
 
+    subgraph 护栏层
+        D --> G1[输入护栏<br/>长度/格式校验]
+        G1 --> E{类型判断}
+    end
+
     subgraph Agent层
-        D --> E{类型判断}
         E -->|图片| F[OCR Agent<br/>Qwen-VL]
         E -->|PDF/文本| G[审查Agent<br/>Qwen-Plus]
         F --> G
+        G --> REF[Reflexion<br/>自我反思]
+        REF -->|质量不达标| G
     end
 
     subgraph 工具层
@@ -30,12 +36,17 @@ graph TB
     end
 
     subgraph 知识层
-        J --> M[向量知识库<br/>法律法规+风险模板]
+        J --> CRAG[Corrective RAG]
+        CRAG --> HYB[Hybrid Retrieval<br/>BM25 + Dense + RRF]
+        HYB --> RR[Reranker<br/>LLM精排]
+        HYB --> M[向量知识库<br/>法律法规+风险模板]
         M --> N[DashScope<br/>Embedding]
     end
 
     subgraph 输出层
-        L --> O[审查报告<br/>Markdown格式]
+        L --> VAL[结构化验证<br/>Pydantic Schema]
+        VAL --> G2[输出护栏]
+        G2 --> O[审查报告<br/>Markdown格式]
         G --> P[Gradio界面]
     end
 ```
@@ -44,7 +55,11 @@ graph TB
 
 - **多格式支持** — PDF文本、扫描件图片、纯文本输入
 - **ReAct多步推理** — Agent自主规划并链式调用工具，完成完整审查流程
-- **RAG知识库** — 内置法律法规和风险条款模板，检索增强审查准确性
+- **Hybrid RAG** — BM25稀疏检索 + Dense稠密检索 + RRF融合 + LLM Reranker精排
+- **Corrective RAG** — 检索质量自检，低质量时自动改写查询（Multi-Query）重试
+- **Reflexion自我反思** — 审查质量5维度评估，不达标自动反思改进并累积经验
+- **Guardrails护栏** — 输入验证 + 成本控制 + 输出结构验证，三层纵深防御
+- **Structured Output** — Pydantic Schema约束审查报告、风险评估等输出格式
 - **多模态OCR** — 使用Qwen-VL识别合同扫描件
 - **灵活部署** — 支持云端API（DashScope）和本地Ollama / vLLM两种模式
 
@@ -87,30 +102,37 @@ python app/gradio_app.py
 ```
 ├── config/                  # 配置模块
 │   ├── model_config.py      # 模型配置（云端/本地切换）
-│   └── prompts.py           # 系统提示词模板
+│   ├── prompts.py           # 系统提示词模板
+│   └── schemas.py           # Pydantic结构化输出Schema
 ├── tools/                   # 自定义工具（5个BaseTool）
 │   ├── contract_parser.py   # 合同解析（PDF提取 + OCR）
 │   ├── clause_extractor.py  # LLM驱动的条款提取
-│   ├── risk_checker.py      # RAG增强的风险检查
+│   ├── risk_checker.py      # Corrective RAG增强的风险检查
 │   ├── amount_calculator.py # 确定性金额与日期计算
 │   └── report_generator.py  # Markdown报告生成
 ├── knowledge/               # RAG知识库
-│   ├── build_kb.py          # 构建流程（分块 → 向量化 → 存储）
+│   ├── build_kb.py          # 构建流程（分块 → 向量化 → BM25 → 存储）
+│   ├── reranker.py          # Reranker模块（LLM / CrossEncoder）
 │   ├── legal_docs/          # 8篇法律法规文档
 │   └── risk_templates/      # 常见风险条款模板
 ├── agents/                  # Agent编排
 │   ├── review_agent.py      # 主审查Agent（ReAct循环）
 │   ├── ocr_agent.py         # 多模态OCR Agent
-│   └── orchestrator.py      # 输入路由（代码判断，非LLM）
+│   ├── orchestrator.py      # 输入路由 + Reflexion编排
+│   ├── reflexion.py         # 自我反思与经验累积
+│   └── guardrails.py        # 护栏（输入/成本/输出三层）
 ├── app/                     # 前端应用
 │   └── gradio_app.py        # Gradio交互式Demo
-├── deploy/                  # 部署方案
+├── deploy/                  # 部署与评估
 │   ├── cloud_deploy.md      # DashScope云端部署指南
 │   ├── edge_deploy.md       # Ollama / vLLM本地部署指南
-│   └── benchmark.py         # 性能评测脚本
-├── tests/                   # 测试（共21个）
-│   ├── test_tools.py        # 14个工具单元测试（9离线+5在线）
-│   └── test_agent.py        # 7个Agent端到端测试（4离线+3在线）
+│   ├── benchmark.py         # 性能评测脚本
+│   └── rag_eval.py          # RAGAS风格RAG评估框架
+├── tests/                   # 测试（共68+个）
+│   ├── test_tools.py        # 14个工具单元测试
+│   ├── test_agent.py        # 7个Agent端到端测试
+│   ├── test_rag_advanced.py # 47个进阶功能测试
+│   └── rag_golden_dataset.json  # 18题RAG黄金测试集
 └── docs/
     ├── architecture.md
     ├── tam_solution.md
@@ -124,6 +146,8 @@ python app/gradio_app.py
 | 框架 | [Qwen-Agent](https://github.com/QwenLM/Qwen-Agent) | 阿里官方Agent框架，ReAct + 工具注册 |
 | 模型 | qwen-plus / qwen-vl-plus | DashScope API 文本生成与视觉理解 |
 | 向量化 | text-embedding-v3 | 1024维向量，用于RAG检索 |
+| 稀疏检索 | BM25 (Okapi) | 关键词匹配，与向量检索互补 |
+| 结构化输出 | Pydantic v2 | Schema约束LLM输出格式 |
 | 前端 | Gradio | 交互式Demo界面 |
 | 本地部署 | Ollama / vLLM | 端侧模型推理服务 |
 
@@ -132,6 +156,8 @@ python app/gradio_app.py
 1. **确定性逻辑用代码，语义理解用模型** — 路由和计算在Python中实现（`if-else`、纯数学），只有需要语言理解的任务交给模型。
 2. **全链路OpenAI兼容接口** — 云端DashScope和本地Ollama切换只需改`base_url`和`model`，业务代码零改动。
 3. **工具即边界** — 每个`BaseTool`有清晰的输入输出契约。Agent决定"何时"调用工具，工具决定"如何"执行。
+4. **纵深防御** — 输入护栏 → 成本控制 → 输出验证，三层护栏保障Agent安全可控。
+5. **检索不盲信** — Corrective RAG在使用检索结果前先评估质量，低质量时改写查询重试。
 
 ## 性能对比
 
@@ -152,8 +178,23 @@ python deploy/benchmark.py
 # 仅离线测试（无需API Key）
 pytest tests/ -v -k "offline"
 
+# 仅运行进阶功能离线测试（47个）
+pytest tests/test_rag_advanced.py -v -k "offline"
+
 # 全部测试（需要 DASHSCOPE_API_KEY）
 DASHSCOPE_API_KEY=sk-xxx pytest tests/ -v
+```
+
+## RAG评估
+
+内置 RAGAS 风格的 RAG 评估框架，支持 Context Precision、Recall、MRR 等指标：
+
+```bash
+# 仅检索指标评估（无需LLM调用）
+python deploy/rag_eval.py
+
+# 完整评估（含LLM-as-Judge）
+python deploy/rag_eval.py --full
 ```
 
 ## 许可证
